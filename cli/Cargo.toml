@@ -4,3 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+cuet.workspace = true
+hound.workspace = true
+quadio-core = { path = "../core" }
+cpal = "^0.15.3"

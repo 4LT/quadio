@@ -4,3 +4,7 @@ members = [
     "cli",
 ]
 resolver = "2"
+
+[workspace.dependencies]
+cuet = "^0.0.3"
+hound = "^3.5.1"
