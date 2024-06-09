@@ -1,16 +1,20 @@
 use hound::SampleFormat;
 use std::io::{Read, Seek};
+use std::num::TryFromIntError;
+
+const REQUIRED_LIST_BODY_SZ: usize = 24;
 
 #[derive(Clone)]
 pub struct Metadata {
     pub spec: hound::WavSpec,
     pub duration: u32,
-    pub cue: Option<cuet::CuePoint>,
+    pub loop_start: Option<u32>,
 }
 
 pub struct QWaveReader<R: Read> {
     pub reader: hound::WavReader<R>,
-    pub cue: Option<cuet::CuePoint>,
+    pub loop_start: Option<u32>,
+    pub loop_length: Option<u32>,
 }
 
 impl<R: Read + Seek> QWaveReader<R> {
@@ -22,9 +26,44 @@ impl<R: Read + Seek> QWaveReader<R> {
             .read_next_chunk(Some(*b"cue "))
             .map_err(|e| e.to_string())?;
 
-        let cue_points = cue_chunk
-            .map(|(_, bytes)| cuet::parse_cue_points(&bytes[..]))
-            .unwrap_or(Vec::new());
+        let loop_start = cue_chunk.and_then(|(_, bytes)| {
+            let pts = cuet::parse_cue_points(&bytes[..]);
+
+            if pts.is_empty() {
+                None
+            } else {
+                Some(pts[0].sample_offset)
+            }
+        });
+
+        let loop_length = if loop_start.is_some() {
+            let list_chunk = cursor
+                .read_next_chunk(Some(*b"LIST"))
+                .map_err(|e| e.to_string())?;
+
+            list_chunk.and_then(|(_, bytes)| {
+                if bytes.len() < REQUIRED_LIST_BODY_SZ {
+                    None
+                } else if &bytes[0..4] != b"adtl" {
+                    None
+                } else if &bytes[4..8] != b"ltxt" {
+                    None
+                } else {
+                    let slice = &bytes
+                        [REQUIRED_LIST_BODY_SZ - 8..REQUIRED_LIST_BODY_SZ];
+
+                    if &slice[4..] == b"mark" {
+                        let mut length_bytes = [0u8; 4];
+                        length_bytes.copy_from_slice(&slice[0..4]);
+                        Some(u32::from_le_bytes(length_bytes))
+                    } else {
+                        None
+                    }
+                }
+            })
+        } else {
+            None
+        };
 
         let reader = hound::WavReader::new(
             cursor.restore_cursor().map_err(|e| e.to_string())?,
@@ -33,21 +72,32 @@ impl<R: Read + Seek> QWaveReader<R> {
 
         Ok(QWaveReader {
             reader,
-            cue: if cue_points.is_empty() {
-                None
-            } else {
-                Some(cue_points[0])
-            },
+            loop_start,
+            loop_length,
         })
     }
 }
 
 impl<R: Read> QWaveReader<R> {
     pub fn metadata(&self) -> Metadata {
+        let wave_duration = self.reader.duration();
+
+        let duration = if let (Some(start), Some(length)) =
+            (self.loop_start, self.loop_length)
+        {
+            if let Some(d) = start.checked_add(length) {
+                d
+            } else {
+                wave_duration
+            }
+        } else {
+            wave_duration
+        };
+
         Metadata {
             spec: self.reader.spec(),
-            duration: self.reader.duration(),
-            cue: self.cue,
+            duration,
+            loop_start: self.loop_start,
         }
     }
 }
@@ -56,6 +106,9 @@ impl<R: Read> QWaveReader<R> {
     pub fn collect_samples(&mut self) -> Result<Vec<f32>, String> {
         let mut error = Option::<String>::None;
         let spec = self.metadata().spec;
+        let duration = self.metadata().duration
+            .try_into()
+            .map_err(|e: TryFromIntError| e.to_string())?;
 
         if spec.channels != 1 {
             return Err("Too many channels".into());
@@ -85,6 +138,7 @@ impl<R: Read> QWaveReader<R> {
         let samples = self
             .reader
             .samples::<i16>()
+            .take(duration)
             .map_while(|s| match s {
                 Ok(s) => Some(samp_to_float(s)),
                 Err(e) => {

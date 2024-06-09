@@ -125,14 +125,14 @@ fn run_command((cmd, args): Command) -> Result<(), String> {
                     info.duration, duration_s,
                 );
 
-                match info.cue {
-                    Some(c) => {
-                        let cue_time = f64::from(c.sample_offset)
-                            / f64::from(info.spec.sample_rate);
+                match info.loop_start {
+                    Some(start) => {
+                        let cue_time =
+                            f64::from(start) / f64::from(info.spec.sample_rate);
 
                         println!(
                             "\tLoop at sample {} ({:.3}s)",
-                            c.sample_offset, cue_time,
+                            start, cue_time,
                         );
                     }
                     None => println!("No loop point found"),
@@ -168,9 +168,8 @@ fn play_wave<R: Read + Seek>(reader: R) -> Result<(), String> {
 
     let mut wave_reader = core::QWaveReader::new(reader)?;
     let metadata = wave_reader.metadata();
-    let loop_sample = metadata.cue.map(|c| c.sample_offset);
 
-    if let Some(s) = loop_sample {
+    if let Some(s) = metadata.loop_start {
         if s > metadata.duration {
             return Err("Loop sample exceeds file duration".into());
         }
@@ -178,7 +177,7 @@ fn play_wave<R: Read + Seek>(reader: R) -> Result<(), String> {
 
     let desired_rate = metadata.spec.sample_rate;
 
-    let duration = match metadata.cue {
+    let duration = match metadata.loop_start {
         None => Some(Duration::from_millis(
             (metadata.duration * 1000 / desired_rate + 1).into(),
         )),
@@ -207,7 +206,7 @@ fn play_wave<R: Read + Seek>(reader: R) -> Result<(), String> {
         let in_end = samples_len.min(offset + buf.len());
         let sample_ct = in_end.saturating_sub(offset);
 
-        if let (Some(loop_start), true) = (loop_sample, in_end != 0) {
+        if let (Some(loop_start), true) = (metadata.loop_start, in_end != 0) {
             let loop_start = loop_start as usize;
             let loop_len = samples_len - loop_start;
 
