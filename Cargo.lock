@@ -186,9 +186,9 @@ dependencies = [
 
 [[package]]
 name = "cuet"
-version = "0.0.3"
+version = "0.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0529c8dbfde826dbee21d7229a597cdc130c857c3b5d5f293d79719587c11467"
+checksum = "be20a6094edd1fb74919dfca88570846f52e6d2ba240c1eba10690fe32f6e468"
 
 [[package]]
 name = "dasp_sample"

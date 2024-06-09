@@ -18,12 +18,12 @@ impl<R: Read + Seek> QWaveReader<R> {
         let mut cursor =
             cuet::WaveCursor::new(reader).map_err(|e| e.to_string())?;
 
-        let cue_bytes = cursor
-            .read_next_chunk_body(*b"cue ")
+        let cue_chunk = cursor
+            .read_next_chunk(Some(*b"cue "))
             .map_err(|e| e.to_string())?;
 
-        let cue_points = cue_bytes
-            .map(|bytes| cuet::parse_cue_points(&bytes[..]))
+        let cue_points = cue_chunk
+            .map(|(_, bytes)| cuet::parse_cue_points(&bytes[..]))
             .unwrap_or(Vec::new());
 
         let reader = hound::WavReader::new(
