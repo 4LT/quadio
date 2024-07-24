@@ -2,8 +2,6 @@ use hound::SampleFormat;
 use std::io::{Read, Seek};
 use std::num::TryFromIntError;
 
-const REQUIRED_LIST_BODY_SZ: usize = 24;
-
 #[derive(Clone)]
 pub struct Metadata {
     pub spec: hound::WavSpec,
@@ -19,10 +17,10 @@ pub struct QWaveReader<R: Read> {
 
 impl<R: Read + Seek> QWaveReader<R> {
     pub fn new(reader: R) -> Result<Self, String> {
-        let mut cursor =
-            cuet::WaveCursor::new(reader).map_err(|e| e.to_string())?;
+        let mut chunk_reader =
+            cuet::ChunkReader::new(reader).map_err(|e| e.to_string())?;
 
-        let cue_chunk = cursor
+        let cue_chunk = chunk_reader
             .read_next_chunk(Some(*b"cue "))
             .map_err(|e| e.to_string())?;
 
@@ -37,36 +35,20 @@ impl<R: Read + Seek> QWaveReader<R> {
         });
 
         let loop_length = if loop_start.is_some() {
-            let list_chunk = cursor
+            let list_chunk = chunk_reader
                 .read_next_chunk(Some(*b"LIST"))
                 .map_err(|e| e.to_string())?;
 
             list_chunk.and_then(|(_, bytes)| {
-                if bytes.len() < REQUIRED_LIST_BODY_SZ {
-                    None
-                } else if &bytes[0..4] != b"adtl" {
-                    None
-                } else if &bytes[4..8] != b"ltxt" {
-                    None
-                } else {
-                    let slice = &bytes
-                        [REQUIRED_LIST_BODY_SZ - 8..REQUIRED_LIST_BODY_SZ];
-
-                    if &slice[4..] == b"mark" {
-                        let mut length_bytes = [0u8; 4];
-                        length_bytes.copy_from_slice(&slice[0..4]);
-                        Some(u32::from_le_bytes(length_bytes))
-                    } else {
-                        None
-                    }
-                }
+                let labeled_texts = cuet::extract_labeled_text_from_list(&bytes); 
+                labeled_texts.iter().next().map(|ltxt| ltxt.sample_length)
             })
         } else {
             None
         };
 
         let reader = hound::WavReader::new(
-            cursor.restore_cursor().map_err(|e| e.to_string())?,
+            chunk_reader.restore_cursor().map_err(|e| e.to_string())?,
         )
         .map_err(|e| e.to_string())?;
 
@@ -100,9 +82,7 @@ impl<R: Read> QWaveReader<R> {
             loop_start: self.loop_start,
         }
     }
-}
 
-impl<R: Read> QWaveReader<R> {
     pub fn collect_samples(&mut self) -> Result<Vec<f32>, String> {
         let mut error = Option::<String>::None;
         let spec = self.metadata().spec;

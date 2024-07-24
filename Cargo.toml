@@ -6,5 +6,5 @@ members = [
 resolver = "2"
 
 [workspace.dependencies]
-cuet = "^0.0.4"
+cuet = "^0.0.6"
 hound = "^3.5.1"
