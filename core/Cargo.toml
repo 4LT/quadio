@@ -6,3 +6,5 @@ edition = "2021"
 [dependencies]
 hound.workspace = true
 cuet.workspace = true
+cpal.workspace = true
+rubato.workspace = true

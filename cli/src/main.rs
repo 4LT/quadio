@@ -1,14 +1,10 @@
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{Sample, SampleFormat, SampleRate};
 use io::{Read, Seek};
 use quadio_core as core;
 use std::collections::HashMap;
-use std::env;
-use std::fs;
-use std::io;
 use std::path::Path;
 use std::thread::sleep;
 use std::time::Duration;
+use std::{env, fs, io};
 
 const ARGUMENTS: [&str; 2] = ["in", "out"];
 
@@ -113,26 +109,35 @@ fn run_command((cmd, args): Command) -> Result<(), String> {
             CommandKind::Info => {
                 let info = core::QWaveReader::new(reader)?.metadata();
                 println!("Information");
-                println!("\tChannels = {}", info.spec.channels);
-                println!("\tSample rate = {}", info.spec.sample_rate);
-                println!("\tSample bits = {}", info.spec.bits_per_sample);
+                println!("\tSample rate = {}", info.sample_rate);
 
                 let duration_s =
-                    f64::from(info.duration) / f64::from(info.spec.sample_rate);
+                    f64::from(info.sample_count) / f64::from(info.sample_rate);
 
                 println!(
                     "\tDuration = {} samples ({:.3}s)",
-                    info.duration, duration_s,
+                    info.sample_count, duration_s,
                 );
 
                 match info.loop_start {
                     Some(start) => {
                         let cue_time =
-                            f64::from(start) / f64::from(info.spec.sample_rate);
+                            f64::from(start) / f64::from(info.sample_rate);
 
                         println!(
-                            "\tLoop at sample {} ({:.3}s)",
+                            "\tLoop starts at sample {} ({:.3}s)",
                             start, cue_time,
+                        );
+
+                        let loop_end =
+                            info.end.or(Some(info.sample_count)).unwrap();
+
+                        let end_time =
+                            f64::from(loop_end) / f64::from(info.sample_rate);
+
+                        println!(
+                            "\tLoop ends at sample {} ({:.3}s)",
+                            loop_end, end_time
                         );
                     }
                     None => println!("No loop point found"),
@@ -160,121 +165,96 @@ fn main() {
 }
 
 fn play_wave<R: Read + Seek>(reader: R) -> Result<(), String> {
-    let host = cpal::default_host();
+    let key_reader = KeyReader::new();
 
-    let device = host
-        .default_output_device()
-        .ok_or("Output device not found")?;
+    if key_reader.is_none() {}
 
     let mut wave_reader = core::QWaveReader::new(reader)?;
     let metadata = wave_reader.metadata();
-
-    if let Some(s) = metadata.loop_start {
-        if s > metadata.duration {
-            return Err("Loop sample exceeds file duration".into());
-        }
-    }
-
-    let desired_rate = metadata.spec.sample_rate;
-
-    let duration = match metadata.loop_start {
-        None => Some(Duration::from_millis(
-            (metadata.duration * 1000 / desired_rate + 1).into(),
-        )),
-        Some(_) => None,
-    };
-
-    let config = device
-        .supported_output_configs()
-        .map_err(|e| e.to_string())?
-        .filter(|cfg| {
-            cfg.channels() == 1 && cfg.sample_format() == SampleFormat::F32
-        })
-        .map(|cfg| cfg.try_with_sample_rate(SampleRate(desired_rate)))
-        .next()
-        .ok_or("Could not find appropriate configuration")?
-        .ok_or("Could not acquire stream with desired sample rate")?;
-
     let samples = wave_reader.collect_samples()?;
 
-    println!("Playing. . .");
+    let mut player = core::setup_player(&metadata, &samples)?;
+    player.play_from_start()?;
+    println!("Playing...");
 
-    let mut offset = 0usize;
+    while player.samples_remaining() > 0 {
+        sleep(Duration::from_millis(30));
 
-    let paint_samples = move |buf: &mut [f32], _: &'_ _| {
-        let samples_len = samples.len();
-        let in_end = samples_len.min(offset + buf.len());
-        let sample_ct = in_end.saturating_sub(offset);
+        if let Some(Some(key)) = key_reader.as_ref().map(|r| r.read()) {
+            let state_tag = player.state();
 
-        if let (Some(loop_start), true) = (metadata.loop_start, in_end != 0) {
-            let loop_start = loop_start as usize;
-            let loop_len = samples_len - loop_start;
-
-            let wrap = |off: usize| {
-                if off > samples_len {
-                    (off - loop_start) % loop_len + loop_start
-                } else {
-                    off
-                }
-            };
-
-            let mut write_start = 0usize;
-            let mut write_end;
-
-            loop {
-                let write_count = sample_ct
-                    .min(buf.len() - write_start)
-                    .min(samples_len - offset);
-
-                write_end = write_start + write_count;
-                let read_end = offset + write_count;
-
-                buf[write_start..write_end]
-                    .copy_from_slice(&samples[offset..read_end]);
-
-                offset += sample_ct;
-                offset = wrap(offset);
-                write_start += write_count;
-
-                if write_start >= buf.len() {
-                    break;
-                }
+            if key == b' '
+                && (state_tag == core::PlayerStateTag::Playing
+                    || state_tag == core::PlayerStateTag::PlayingLooped)
+            {
+                player.pause();
+                let playhead_pos = player.playhead();
+                let playhead_time =
+                    playhead_pos as f64 / f64::from(player.sample_rate());
+                println!(
+                    "Paused at sample {} ({:.3}s)",
+                    playhead_pos, playhead_time
+                );
+            } else {
+                let _ = player.resume();
+                println!("Resumed");
             }
-        } else if offset < samples_len {
-            let write_count =
-                sample_ct.min(buf.len()).min(samples_len - offset);
-
-            let read_end = offset + write_count;
-
-            buf[..write_count].copy_from_slice(&samples[offset..read_end]);
-
-            buf[write_count..].fill(f32::EQUILIBRIUM);
-            offset += buf.len();
-        } else {
-            buf.fill(f32::EQUILIBRIUM);
-        }
-    };
-
-    let stream = device
-        .build_output_stream(
-            &config.into(),
-            paint_samples,
-            move |_| {},
-            duration,
-        )
-        .map_err(|e| e.to_string())?;
-
-    stream.play().unwrap();
-
-    if let Some(duration) = duration {
-        sleep(duration);
-    } else {
-        loop {
-            sleep(Duration::from_millis(10));
         }
     }
 
-    println!("Done.");
-
+    println!("Stopped.");
     Ok(())
+}
+
+struct KeyReader {
+    old_attr: libc::termios,
+}
+
+impl KeyReader {
+    pub fn new() -> Option<Self> {
+        let mut term_attr: libc::termios = unsafe { std::mem::zeroed() };
+
+        unsafe {
+            if libc::tcgetattr(libc::STDIN_FILENO, &mut term_attr) < 0 {
+                return None;
+            }
+        }
+
+        let old_attr = term_attr;
+        term_attr.c_lflag &= !(libc::ECHO | libc::ICANON);
+        term_attr.c_cc[libc::VMIN] = 0;
+        term_attr.c_cc[libc::VTIME] = 0;
+
+        unsafe {
+            if libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &term_attr)
+                < 0
+            {
+                return None;
+            }
+        }
+
+        Some(KeyReader { old_attr })
+    }
+
+    pub fn read(&self) -> Option<u8> {
+        let mut buffer = vec![0u8; 4096];
+
+        let ret = unsafe {
+            libc::read(libc::STDIN_FILENO, buffer.as_mut_ptr() as *mut _, 4096)
+        };
+
+        if ret > 0 {
+            Some(buffer[ret as usize - 1])
+        } else {
+            None
+        }
+    }
+}
+
+impl Drop for KeyReader {
+    fn drop(&mut self) {
+        unsafe {
+            libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &self.old_attr);
+        }
+    }
 }

@@ -8,3 +8,5 @@ resolver = "2"
 [workspace.dependencies]
 cuet = "^0.0.6"
 hound = "^3.5.1"
+cpal = "^0.15.3"
+rubato = "^0.15.0"

@@ -7,4 +7,5 @@ edition = "2021"
 cuet.workspace = true
 hound.workspace = true
 quadio-core = { path = "../core" }
-cpal = "^0.15.3"
+cpal.workspace = true
+libc = { version = "^0.2.155" }
