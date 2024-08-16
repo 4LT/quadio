@@ -14,6 +14,7 @@ type CommandArgs = HashMap<&'static str, String>;
 enum CommandKind {
     Info,
     Play,
+    PlayLooped,
     Help,
 }
 
@@ -24,6 +25,7 @@ impl TryFrom<&str> for CommandKind {
         match from {
             "info" => Ok(CommandKind::Info),
             "play" => Ok(CommandKind::Play),
+            "loop" => Ok(CommandKind::PlayLooped),
             "help" => Ok(CommandKind::Help),
             other => Err(format!("Unknown sub-command \"{}\"", other)),
         }
@@ -144,7 +146,10 @@ fn run_command((cmd, args): Command) -> Result<(), String> {
                 }
             }
             CommandKind::Play => {
-                play_wave(reader)?;
+                play_wave(reader, false)?;
+            }
+            CommandKind::PlayLooped => {
+                play_wave(reader, true)?;
             }
             CommandKind::Help => {}
         }
@@ -164,45 +169,60 @@ fn main() {
     }
 }
 
-fn play_wave<R: Read + Seek>(reader: R) -> Result<(), String> {
+fn play_wave<R: Read + Seek>(reader: R, looped: bool) -> Result<(), String> {
     let key_reader = KeyReader::new();
 
     if key_reader.is_none() {}
 
     let mut wave_reader = core::QWaveReader::new(reader)?;
+    let mut quit = false;
+    let mut done = false;
     let metadata = wave_reader.metadata();
     let samples = wave_reader.collect_samples()?;
 
     let mut player = core::setup_player(&metadata, &samples)?;
-    player.play_from_start()?;
+    player.play(0, looped)?;
     println!("Playing...");
 
-    while player.samples_remaining() > 0 {
+    while !done {
         sleep(Duration::from_millis(30));
 
         if let Some(Some(key)) = key_reader.as_ref().map(|r| r.read()) {
             let state_tag = player.state();
 
-            if key == b' '
-                && (state_tag == core::PlayerStateTag::Playing
-                    || state_tag == core::PlayerStateTag::PlayingLooped)
-            {
-                player.pause();
-                let playhead_pos = player.playhead();
-                let playhead_time =
-                    playhead_pos as f64 / f64::from(player.sample_rate());
-                println!(
-                    "Paused at sample {} ({:.3}s)",
-                    playhead_pos, playhead_time
-                );
-            } else {
-                let _ = player.resume();
-                println!("Resumed");
+            if key == b' ' {
+                if state_tag == core::PlayerStateTag::Playing
+                    || state_tag == core::PlayerStateTag::PlayingLooped
+                {
+                    player.pause();
+                    let playhead_pos = player.playhead();
+                    let playhead_time =
+                        playhead_pos as f64 / f64::from(metadata.sample_rate);
+                    println!(
+                        "Paused at sample {} ({:.3}s)",
+                        playhead_pos, playhead_time
+                    );
+                } else {
+                    player.resume().unwrap();
+                    println!("Resumed");
+                }
             }
+
+            if key == b'q' {
+                quit = true;
+                done = true;
+            }
+        }
+
+        if player.samples_remaining() == 0 && !looped {
+            done = true;
         }
     }
 
-    println!("Stopped.");
+    if !quit {
+        println!("Stopped.");
+    }
+
     Ok(())
 }
 

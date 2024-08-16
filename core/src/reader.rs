@@ -2,7 +2,7 @@ use hound::SampleFormat;
 use std::io::{Read, Seek};
 use std::num::TryFromIntError;
 
-#[derive(Clone)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct Metadata {
     pub sample_rate: u32,
     pub sample_count: u32,

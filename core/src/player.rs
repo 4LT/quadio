@@ -23,13 +23,16 @@ pub struct PlayerConfig {
     pub end: Option<usize>,
 }
 
+#[derive(Debug)]
 pub struct Player {
     samples: Arc<Vec<f32>>,
-    sample_rate: u32,
+    playback_rate: u32,
     loop_start: usize,
     end: usize,
     state: PlayerState,
     playhead: Arc<AtomicUsize>,
+    input_rate: u32,
+    input_len: usize,
 }
 
 impl Player {
@@ -54,38 +57,57 @@ impl Player {
             .ok_or(NO_OUTPUT)?;
 
         let stream_config = stream_config(&device, config.sample_rate)?;
-        let outrate = stream_config.sample_rate().0;
+        let playback_rate = stream_config.sample_rate().0;
 
         let mut playback_samples =
-            resample(config.sample_rate, outrate, &config.samples);
+            resample(config.sample_rate, playback_rate, &config.samples);
 
-        let end = scale_index(config.sample_rate, outrate, end)
+        let end = scale_index(config.sample_rate, playback_rate, end)
             .ok_or("Scaled end too large")?
             .min(playback_samples.len());
 
         playback_samples.truncate(end);
 
-        let loop_start = scale_index(config.sample_rate, outrate, loop_start)
-            .ok_or("Scaled loop start too large")
-            .and_then(|start| {
-                if start < end {
-                    Ok(start)
-                } else {
-                    Err("Start is after end")
-                }
-            })?;
+        let loop_start =
+            scale_index(config.sample_rate, playback_rate, loop_start)
+                .ok_or("Scaled loop start too large")
+                .and_then(|start| {
+                    if start < end {
+                        Ok(start)
+                    } else {
+                        Err("Start is after end")
+                    }
+                })?;
 
         Ok(Player {
             samples: Arc::new(playback_samples),
-            sample_rate: outrate,
+            playback_rate,
             loop_start,
             end,
             state: PlayerState::Stopped,
             playhead: Arc::new(AtomicUsize::new(0)),
+            input_rate: config.sample_rate,
+            input_len: config.samples.len(),
         })
     }
 
-    fn play(&mut self, looped: bool, play_from: usize) -> Result<(), String> {
+    pub fn play(
+        &mut self,
+        play_from: usize,
+        looped: bool,
+    ) -> Result<(), String> {
+        let play_from =
+            scale_index(self.input_rate, self.playback_rate, play_from)
+                .ok_or("Bad playhead position")?;
+
+        self.play_from_playback_position(play_from, looped)
+    }
+
+    fn play_from_playback_position(
+        &mut self,
+        play_from: usize,
+        looped: bool,
+    ) -> Result<(), String> {
         match self.state {
             PlayerState::PlayingLooped(_) | PlayerState::Playing(_) => {
                 self.stop();
@@ -101,12 +123,12 @@ impl Player {
 
         // It's clunky to have to call this twice, but easier than
         // maintaining device and stream config in the struct
-        let stream_config = stream_config(&device, self.sample_rate)?;
+        let stream_config = stream_config(&device, self.playback_rate)?;
 
-        if stream_config.sample_rate().0 != self.sample_rate {
+        if stream_config.sample_rate().0 != self.playback_rate {
             return Err(format!(
                 "Failed to acquire stream config @ {}Hz",
-                self.sample_rate
+                self.playback_rate
             ));
         }
 
@@ -139,14 +161,6 @@ impl Player {
         Ok(())
     }
 
-    pub fn play_from_start(&mut self) -> Result<(), String> {
-        self.play(false, 0)
-    }
-
-    pub fn play_from_start_looped(&mut self) -> Result<(), String> {
-        self.play(true, 0)
-    }
-
     pub fn stop(&mut self) {
         // Stream gets dropped if state was previously Playing or PlayingLooped
         self.state = PlayerState::Stopped;
@@ -175,9 +189,9 @@ impl Player {
     pub fn resume(&mut self) -> Result<(), String> {
         match self.state {
             PlayerState::PlayingLooped(_) | PlayerState::Playing(_) => {}
-            PlayerState::Stopped => self.play(false, 0)?,
+            PlayerState::Stopped => self.play(0, false)?,
             PlayerState::Paused(PlaybackState { playhead, looped }) => {
-                self.play(looped, playhead)?;
+                self.play_from_playback_position(playhead, looped)?;
             }
         };
 
@@ -185,15 +199,17 @@ impl Player {
     }
 
     pub fn playhead(&self) -> usize {
-        self.playhead.load(Ordering::Relaxed)
+        let playback_position = self.playhead.load(Ordering::Relaxed);
+        scale_index(self.playback_rate, self.input_rate, playback_position)
+            .unwrap()
     }
 
-    pub fn sample_rate(&self) -> u32 {
-        self.sample_rate
+    pub fn playback_rate(&self) -> u32 {
+        self.playback_rate
     }
 
     pub fn samples_remaining(&self) -> usize {
-        self.samples.len() - self.playhead()
+        self.input_len.saturating_sub(self.playhead())
     }
 
     pub fn state(&self) -> PlayerStateTag {
@@ -232,12 +248,7 @@ fn resample(inrate: u32, outrate: u32, input_samples: &[f32]) -> Vec<f32> {
     )
     .unwrap();
 
-    interpolator
-        .process(
-            &[input_samples],
-            None,
-        )
-        .unwrap()[0].clone()
+    interpolator.process(&[input_samples], None).unwrap()[0].clone()
 }
 
 fn stream_config(
@@ -288,13 +299,11 @@ fn stream_callback<T>(
     let mut offset = playhead.load(Ordering::Relaxed);
 
     move |buf: &mut [f32], _: &'_ _| {
-        let sample_ct = in_end.saturating_sub(offset);
-
         if let Some(loop_start) = loop_start {
             let loop_len = in_end - loop_start;
 
             let wrap = |off: usize| {
-                if off > in_end {
+                if off >= in_end {
                     (off - loop_start) % loop_len + loop_start
                 } else {
                     off
@@ -302,28 +311,30 @@ fn stream_callback<T>(
             };
 
             let mut write_start = 0usize;
-            let mut write_end;
 
             loop {
-                let write_count =
-                    sample_ct.min(buf.len() - write_start).min(in_end - offset);
+                let write_count = (buf.len() - write_start)
+                    .min(in_end.saturating_sub(offset));
 
-                write_end = write_start + write_count;
+                let write_end = write_start + write_count;
                 let read_end = offset + write_count;
 
                 buf[write_start..write_end]
                     .copy_from_slice(&samples[offset..read_end]);
 
-                offset += sample_ct;
+                offset += write_count;
                 offset = wrap(offset);
-                write_start += write_count;
+                write_start = write_end;
 
                 if write_start >= buf.len() {
+                    assert_eq!(write_end, buf.len());
                     break;
                 }
             }
         } else if offset < in_end {
-            let write_count = sample_ct.min(buf.len()).min(samples.len() - offset);
+            let sample_ct = in_end.saturating_sub(offset);
+            let write_count =
+                sample_ct.min(buf.len()).min(samples.len() - offset);
 
             let read_end = offset + write_count;
 
@@ -351,6 +362,28 @@ enum PlayerState {
     PlayingLooped(Box<dyn StreamTrait>),
 
     Paused(PlaybackState),
+}
+
+impl std::fmt::Debug for PlayerState {
+    fn fmt(
+        &self,
+        formatter: &mut std::fmt::Formatter<'_>,
+    ) -> Result<(), std::fmt::Error> {
+        match self {
+            PlayerState::Stopped => write!(formatter, "PlayerState::Stopped")?,
+            PlayerState::Playing(_) => {
+                write!(formatter, "PlayerState::Playing(<stream>)")?
+            }
+            PlayerState::PlayingLooped(_) => {
+                write!(formatter, "PlayerState::PlayingLooped(<stream>)")?
+            }
+            PlayerState::Paused(state) => {
+                write!(formatter, "PlayerState::Paused({:?})", state)?
+            }
+        };
+
+        Ok(())
+    }
 }
 
 impl PlayerState {
