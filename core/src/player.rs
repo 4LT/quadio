@@ -32,7 +32,6 @@ pub struct Player {
     state: PlayerState,
     playhead: Arc<AtomicUsize>,
     input_rate: u32,
-    input_len: usize,
 }
 
 impl Player {
@@ -87,7 +86,6 @@ impl Player {
             state: PlayerState::Stopped,
             playhead: Arc::new(AtomicUsize::new(0)),
             input_rate: config.sample_rate,
-            input_len: config.samples.len(),
         })
     }
 
@@ -209,7 +207,11 @@ impl Player {
     }
 
     pub fn samples_remaining(&self) -> usize {
-        self.input_len.saturating_sub(self.playhead())
+        let playback_position = self.playhead.load(Ordering::Relaxed);
+        let playback_samples =
+            self.samples.len().saturating_sub(playback_position);
+        scale_index(self.playback_rate, self.input_rate, playback_samples)
+            .unwrap()
     }
 
     pub fn state(&self) -> PlayerStateTag {

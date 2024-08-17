@@ -1,4 +1,4 @@
-use cuet::{ChunkWriter, LabeledText, CuePoint};
+use cuet::{ChunkWriter, CuePoint, LabeledText};
 use hound::{WavSpec, WavWriter};
 use std::fs::OpenOptions;
 use std::io::{BufWriter, Read, Seek, SeekFrom};
@@ -102,7 +102,6 @@ impl Project {
 
         let mut outfile = writer.into_inner().map_err(|e| e.to_string())?;
 
-
         if let Some(sample_loop) = &self.sample_loop {
             outfile
                 .seek(SeekFrom::Start(0))
@@ -112,18 +111,26 @@ impl Project {
                 ChunkWriter::new(outfile).map_err(|e| e.to_string())?;
 
             let cue = [CuePoint::from_sample_offset(0, sample_loop.start)];
-            chunk_writer.append_cue_chunk(&cue).map_err(|e| e.to_string())?;
+            chunk_writer
+                .append_cue_chunk(&cue)
+                .map_err(|e| e.to_string())?;
 
-            if self.samples.len().try_into().map(
-                |len: u32| len != sample_loop.end
-            ).unwrap_or(true) {
-                let length = sample_loop.end.checked_sub(sample_loop.start)
+            if self
+                .samples
+                .len()
+                .try_into()
+                .map(|len: u32| len != sample_loop.end)
+                .unwrap_or(true)
+            {
+                let length = sample_loop
+                    .end
+                    .checked_sub(sample_loop.start)
                     .ok_or("Loop ends before it begins")?;
 
                 let labeled_text = [LabeledText::from_cue_length(0, length)];
-                chunk_writer.append_label_chunk(&labeled_text).map_err(
-                    |e| e.to_string()
-                )?;
+                chunk_writer
+                    .append_label_chunk(&labeled_text)
+                    .map_err(|e| e.to_string())?;
             }
         }
 
