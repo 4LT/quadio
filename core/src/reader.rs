@@ -8,6 +8,7 @@ pub struct Metadata {
     pub sample_count: u32,
     pub loop_start: Option<u32>,
     pub end: Option<u32>,
+    pub bits_per_sample: u16,
 }
 
 pub struct QWaveReader<R: Read> {
@@ -83,6 +84,7 @@ impl<R: Read> QWaveReader<R> {
             sample_count,
             loop_start: self.loop_start,
             end,
+            bits_per_sample: self.reader.spec().bits_per_sample,
         }
     }
 

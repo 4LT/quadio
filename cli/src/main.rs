@@ -15,6 +15,7 @@ enum CommandKind {
     Info,
     Play,
     PlayLooped,
+    Strip,
     Help,
 }
 
@@ -26,6 +27,7 @@ impl TryFrom<&str> for CommandKind {
             "info" => Ok(CommandKind::Info),
             "play" => Ok(CommandKind::Play),
             "loop" => Ok(CommandKind::PlayLooped),
+            "strip" => Ok(CommandKind::Strip),
             "help" => Ok(CommandKind::Help),
             other => Err(format!("Unknown sub-command \"{}\"", other)),
         }
@@ -70,8 +72,10 @@ fn parse_args<'a, T: Iterator<Item = &'a str>>(
                     let (argname, param) = parse_arg_param(arg)?;
                     map.insert(argname, param);
                 }
-            } else {
+            } else if !map.contains_key("in") {
                 map.insert("in", arg.into());
+            } else {
+                map.insert("out", arg.into());
                 reached_end = true;
             }
         } else {
@@ -151,9 +155,33 @@ fn run_command((cmd, args): Command) -> Result<(), String> {
             CommandKind::PlayLooped => {
                 play_wave(reader, true)?;
             }
-            CommandKind::Help => {}
+            CommandKind::Strip => {
+                let q_wave_reader = core::QWaveReader::new(reader)?;
+                let project = core::Project::from_reader(q_wave_reader)?;
+                run_write_command((cmd, args), project)?;
+            }
+            CommandKind::Help => {
+                unreachable!();
+            }
         }
     }
+
+    Ok(())
+}
+
+fn run_write_command((cmd, args): Command, mut proj: core::Project) -> Result<(), String> {
+    let outpath = Path::new(expect_arg(&args, "out")?);
+
+    match cmd {
+        CommandKind::Strip => {
+            proj.set_loop(None);
+        }
+        _ => {
+            unreachable!();
+        }
+    };
+
+    proj.write_to(outpath)?;
 
     Ok(())
 }

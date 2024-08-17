@@ -4,6 +4,9 @@ pub use player::*;
 mod reader;
 pub use reader::*;
 
+mod project;
+pub use project::*;
+
 pub fn setup_player(
     wave_metadata: &Metadata,
     samples: &[i16],
