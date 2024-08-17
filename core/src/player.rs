@@ -75,7 +75,7 @@ impl Player {
                     if start < end {
                         Ok(start)
                     } else {
-                        Err("Start is after end")
+                        Err("Loop start is AT or AFTER end")
                     }
                 })?;
 

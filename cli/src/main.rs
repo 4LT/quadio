@@ -6,7 +6,7 @@ use std::thread::sleep;
 use std::time::Duration;
 use std::{env, fs, io};
 
-const ARGUMENTS: [&str; 2] = ["in", "out"];
+const ARGUMENTS: [&str; 4] = ["in", "out", "start", "end"];
 
 type CommandArgs = HashMap<&'static str, String>;
 
@@ -16,6 +16,7 @@ enum CommandKind {
     Play,
     PlayLooped,
     Strip,
+    SetLoop,
     Help,
 }
 
@@ -27,6 +28,7 @@ impl TryFrom<&str> for CommandKind {
             "info" => Ok(CommandKind::Info),
             "play" => Ok(CommandKind::Play),
             "loop" => Ok(CommandKind::PlayLooped),
+            "set-loop" => Ok(CommandKind::SetLoop),
             "strip" => Ok(CommandKind::Strip),
             "help" => Ok(CommandKind::Help),
             other => Err(format!("Unknown sub-command \"{}\"", other)),
@@ -155,7 +157,7 @@ fn run_command((cmd, args): Command) -> Result<(), String> {
             CommandKind::PlayLooped => {
                 play_wave(reader, true)?;
             }
-            CommandKind::Strip => {
+            CommandKind::Strip | CommandKind::SetLoop => {
                 let q_wave_reader = core::QWaveReader::new(reader)?;
                 let project = core::Project::from_reader(q_wave_reader)?;
                 run_write_command((cmd, args), project)?;
@@ -169,19 +171,33 @@ fn run_command((cmd, args): Command) -> Result<(), String> {
     Ok(())
 }
 
-fn run_write_command((cmd, args): Command, mut proj: core::Project) -> Result<(), String> {
+fn run_write_command(
+    (cmd, args): Command,
+    mut proj: core::Project,
+) -> Result<(), String> {
     let outpath = Path::new(expect_arg(&args, "out")?);
 
     match cmd {
         CommandKind::Strip => {
             proj.set_loop(None);
         }
+        CommandKind::SetLoop => {
+            let start = parse_time(expect_arg(&args, "start")?, &proj)?;
+
+            let end = args
+                .get("end")
+                .map(|e| parse_time(e, &proj))
+                .transpose()?
+                .unwrap_or(proj.sample_count());
+
+            proj.set_loop(Some(start..end));
+        }
         _ => {
             unreachable!();
         }
     };
 
-    proj.write_to(outpath)?;
+    proj.write_to(&outpath)?;
 
     Ok(())
 }
@@ -195,6 +211,29 @@ fn main() {
     if let Err(e) = result.and_then(run_command) {
         eprintln!("{}", e);
     }
+}
+
+fn parse_time(
+    time_str: impl AsRef<str>,
+    proj: &core::Project,
+) -> Result<u32, String> {
+    let time_str = time_str.as_ref();
+
+    Ok(if time_str == "LAST" {
+        proj.sample_count()
+    } else if time_str.ends_with("ms") {
+        let millis = time_str[..time_str.len() - 2]
+            .parse::<f64>()
+            .or(Err("Failed to parse time in milliseconds"))?;
+        (millis / 1000.0 * f64::from(proj.sample_rate())).round() as u32
+    } else if time_str.ends_with("s") {
+        let seconds = time_str[..time_str.len() - 1]
+            .parse::<f64>()
+            .or(Err("Failed to parse time in seconds"))?;
+        (seconds * f64::from(proj.sample_rate())).round() as u32
+    } else {
+        time_str.parse::<u32>().or(Err("Failed to parse time"))?
+    })
 }
 
 fn play_wave<R: Read + Seek>(reader: R, looped: bool) -> Result<(), String> {

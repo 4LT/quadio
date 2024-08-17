@@ -1,6 +1,6 @@
 use cuet::{ChunkWriter, LabeledText, CuePoint};
 use hound::{WavSpec, WavWriter};
-use std::fs::File;
+use std::fs::OpenOptions;
 use std::io::{BufWriter, Read, Seek, SeekFrom};
 use std::ops::Range;
 use std::path::Path;
@@ -57,8 +57,21 @@ impl Project {
         self.sample_loop = sample_loop;
     }
 
-    pub fn write_to(&self, outpath: impl AsRef<Path>) -> Result<(), String> {
-        let outfile = File::create(outpath).map_err(|e| e.to_string())?;
+    pub fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+
+    pub fn sample_count(&self) -> u32 {
+        self.samples.len().try_into().unwrap()
+    }
+
+    pub fn write_to(&self, outpath: &impl AsRef<Path>) -> Result<(), String> {
+        let outfile = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(outpath)
+            .map_err(|e| e.to_string())?;
         let mut writer = BufWriter::new(outfile);
 
         let wave_spec = WavSpec {
@@ -88,6 +101,7 @@ impl Project {
         }
 
         let mut outfile = writer.into_inner().map_err(|e| e.to_string())?;
+
 
         if let Some(sample_loop) = &self.sample_loop {
             outfile
