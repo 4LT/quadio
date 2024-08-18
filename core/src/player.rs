@@ -131,6 +131,7 @@ impl Player {
         }
 
         let loop_start = if looped { Some(self.loop_start) } else { None };
+        let channels = stream_config.channels();
 
         let stream = Box::new(
             device
@@ -141,6 +142,7 @@ impl Player {
                         Arc::clone(&self.playhead),
                         loop_start,
                         self.end,
+                        channels,
                     ),
                     move |_| {},
                     None,
@@ -263,13 +265,34 @@ fn stream_config(
         CD_SAMPLE_RATE
     };
 
-    let config = device
+    let mut configs = device
         .supported_output_configs()
         .map_err(|e| e.to_string())?
-        .filter(|cfg| {
-            cfg.channels() == 1 && cfg.sample_format() == SampleFormat::F32
-        })
-        .map(|range| {
+        .filter(|cfg| cfg.sample_format() == SampleFormat::F32)
+        .collect::<Vec<_>>();
+
+    let configs_1_ch = configs
+        .iter()
+        .filter(|cfg| cfg.channels() == 1)
+        .copied()
+        .collect::<Vec<_>>();
+    let configs_2_ch = configs
+        .iter()
+        .filter(|cfg| cfg.channels() == 2)
+        .copied()
+        .collect::<Vec<_>>();
+
+    configs = if !configs_1_ch.is_empty() {
+        configs_1_ch
+    } else if !configs_2_ch.is_empty() {
+        configs_2_ch
+    } else {
+        configs
+    };
+
+    let config = configs
+        .iter()
+        .flat_map(|range| {
             let mut cfg =
                 range.try_with_sample_rate(SampleRate(preferred_rate));
 
@@ -286,8 +309,7 @@ fn stream_config(
             cfg
         })
         .next()
-        .ok_or("Could not find appropriate configuration")?
-        .ok_or("Could not acquire stream with requested sample rate")?;
+        .ok_or("Could not find appropriate stream configuration")?;
 
     Ok(config)
 }
@@ -297,10 +319,14 @@ fn stream_callback<T>(
     playhead: Arc<AtomicUsize>,
     loop_start: Option<usize>,
     in_end: usize,
+    channels: u16,
 ) -> impl FnMut(&mut [f32], &'_ T) {
     let mut offset = playhead.load(Ordering::Relaxed);
+    let channels = usize::from(channels);
 
     move |buf: &mut [f32], _: &'_ _| {
+        let sub_buf_len = buf.len() / channels;
+
         if let Some(loop_start) = loop_start {
             let loop_len = in_end - loop_start;
 
@@ -315,7 +341,7 @@ fn stream_callback<T>(
             let mut write_start = 0usize;
 
             loop {
-                let write_count = (buf.len() - write_start)
+                let write_count = (sub_buf_len - write_start)
                     .min(in_end.saturating_sub(offset));
 
                 let write_end = write_start + write_count;
@@ -328,23 +354,37 @@ fn stream_callback<T>(
                 offset = wrap(offset);
                 write_start = write_end;
 
-                if write_start >= buf.len() {
-                    assert_eq!(write_end, buf.len());
+                if write_start >= sub_buf_len {
+                    assert_eq!(write_end, sub_buf_len);
                     break;
                 }
             }
         } else if offset < in_end {
             let sample_ct = in_end.saturating_sub(offset);
             let write_count =
-                sample_ct.min(buf.len()).min(samples.len() - offset);
+                sample_ct.min(sub_buf_len).min(samples.len() - offset);
 
             let read_end = offset + write_count;
 
             buf[..write_count].copy_from_slice(&samples[offset..read_end]);
-            buf[write_count..].fill(f32::EQUILIBRIUM);
-            offset += buf.len();
+            buf[write_count..sub_buf_len].fill(f32::EQUILIBRIUM);
+            offset += sub_buf_len;
         } else {
-            buf.fill(f32::EQUILIBRIUM);
+            buf[..sub_buf_len].fill(f32::EQUILIBRIUM);
+        }
+
+        // extend buffer by channel count
+        if channels > 1 {
+            let mut src_idx = sub_buf_len;
+            let mut dst_idx = buf.len();
+            while src_idx > 0 {
+                src_idx-= 1;
+                dst_idx-= channels;
+
+                for ch in 0..channels {
+                    buf[dst_idx + ch] = buf[src_idx];
+                }
+            }
         }
 
         offset = offset.min(samples.len());

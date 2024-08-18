@@ -7,6 +7,7 @@ use std::time::Duration;
 use std::{env, fs, io};
 
 const ARGUMENTS: [&str; 4] = ["in", "out", "start", "end"];
+const INPUT_BUFFER_SZ: usize = 4096;
 
 type CommandArgs = HashMap<&'static str, String>;
 
@@ -293,10 +294,12 @@ fn play_wave<R: Read + Seek>(reader: R, looped: bool) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(not(target_os = "windows"))]
 struct KeyReader {
     old_attr: libc::termios,
 }
 
+#[cfg(not(target_os = "windows"))]
 impl KeyReader {
     pub fn new() -> Option<Self> {
         let mut term_attr: libc::termios = unsafe { std::mem::zeroed() };
@@ -324,10 +327,14 @@ impl KeyReader {
     }
 
     pub fn read(&self) -> Option<u8> {
-        let mut buffer = vec![0u8; 4096];
+        let mut buffer = vec![0u8; INPUT_BUFFER_SZ];
 
         let ret = unsafe {
-            libc::read(libc::STDIN_FILENO, buffer.as_mut_ptr() as *mut _, 4096)
+            libc::read(
+                libc::STDIN_FILENO,
+                buffer.as_mut_ptr() as *mut _,
+                INPUT_BUFFER_SZ,
+            )
         };
 
         if ret > 0 {
@@ -338,10 +345,114 @@ impl KeyReader {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 impl Drop for KeyReader {
     fn drop(&mut self) {
         unsafe {
             libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &self.old_attr);
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+use winapi::um::{
+    consoleapi as conapi, processenv, winbase as base, wincon as con,
+};
+
+#[cfg(target_os = "windows")]
+struct KeyReader {
+    old_mode: u32,
+}
+
+#[cfg(target_os = "windows")]
+impl KeyReader {
+    pub fn new() -> Option<Self> {
+        let mut con_mode = 0u32;
+
+        let h_stdin =
+            unsafe { processenv::GetStdHandle(base::STD_INPUT_HANDLE) };
+
+        unsafe {
+            if conapi::GetConsoleMode(h_stdin, &mut con_mode) == 0 {
+                return None;
+            }
+        }
+
+        let old_mode = con_mode;
+        con_mode &= !(con::ENABLE_ECHO_INPUT | con::ENABLE_LINE_INPUT);
+
+        unsafe {
+            if conapi::SetConsoleMode(h_stdin, con_mode) == 0 {
+                return None;
+            }
+        }
+
+        Some(Self { old_mode })
+    }
+
+    pub fn read(&self) -> Option<u8> {
+        let mut peek_buffer: [con::INPUT_RECORD; 1] =
+            unsafe { std::mem::zeroed() };
+        let mut peeked_records = 0u32;
+
+        let h_stdin =
+            unsafe { processenv::GetStdHandle(base::STD_INPUT_HANDLE) };
+
+        unsafe {
+            if conapi::PeekConsoleInputA(
+                h_stdin,
+                &mut peek_buffer[0],
+                1,
+                &mut peeked_records,
+            ) == 0
+            {
+                return None;
+            }
+        }
+
+        if peeked_records == 0 {
+            return None;
+        }
+
+        let mut read_buffer: [con::INPUT_RECORD; INPUT_BUFFER_SZ] =
+            unsafe { std::mem::zeroed() };
+        let mut read_records = 0u32;
+
+        unsafe {
+            if conapi::ReadConsoleInputA(
+                h_stdin,
+                &mut read_buffer[0],
+                INPUT_BUFFER_SZ as u32,
+                &mut read_records,
+            ) == 0
+            {
+                return None;
+            }
+        }
+
+        let mut indices = (0..read_records as usize).collect::<Vec<_>>();
+        indices.reverse();
+
+        for i in indices {
+            if read_buffer[i].EventType == con::KEY_EVENT {
+                let evt = unsafe { read_buffer[i].Event.KeyEvent() };
+
+                if evt.bKeyDown != 0 {
+                    return Some(*unsafe { evt.uChar.AsciiChar() } as u8);
+                }
+            }
+        }
+
+        None
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for KeyReader {
+    fn drop(&mut self) {
+        unsafe {
+            let h_stdin = processenv::GetStdHandle(base::STD_INPUT_HANDLE);
+            conapi::SetConsoleMode(h_stdin, self.old_mode);
         }
     }
 }
