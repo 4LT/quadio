@@ -4,10 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-cuet.workspace = true
-hound.workspace = true
 quadio-core = { path = "../core" }
-cpal.workspace = true
 
 [target.'cfg(not(target_os = "windows"))'.dependencies]
 libc = { version = "^0.2.155" }

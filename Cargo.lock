@@ -186,9 +186,9 @@ dependencies = [
 
 [[package]]
 name = "cuet"
-version = "0.0.6"
+version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "884fe265af0febce2255644f21b2361d252caa73388104d58f7897aa2657ace1"
+checksum = "431059ca3394d39724d2786d9cea37c8031ca413b64c868199aae2ab951362bf"
 
 [[package]]
 name = "dasp_sample"
@@ -504,9 +504,6 @@ dependencies = [
 name = "quadio-cli"
 version = "0.1.0"
 dependencies = [
- "cpal",
- "cuet",
- "hound",
  "libc",
  "quadio-core",
  "winapi",
