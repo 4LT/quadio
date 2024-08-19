@@ -65,6 +65,47 @@ impl Project {
         self.samples.len().try_into().unwrap()
     }
 
+    pub fn blend(&mut self, window_sz: u32) -> Result<(), String> {
+        if let Some(sample_loop) = &self.sample_loop {
+            let loop_width = sample_loop.end - sample_loop.start;
+
+            if loop_width == 0 {
+                return Err(String::from("Invalid loop"));
+            }
+
+            if window_sz > sample_loop.start {
+                return Err(String::from(
+                    "Insufficient lead before loop for blend",
+                ));
+            }
+
+            if window_sz > loop_width {
+                return Err(String::from("Blend window longer than loop"));
+            }
+
+            let window_a_start =
+                sample_loop.start as usize - window_sz as usize;
+            let window_b_start = sample_loop.end as usize - window_sz as usize;
+
+            for i in 0..window_sz as usize {
+                let weight = cube_step(i as f64 / f64::from(window_sz));
+                let sample_a = self.samples[i + window_a_start] as f64;
+                let sample_b = self.samples[i + window_b_start] as f64;
+                let new_sample = weight * sample_a + (1.0 - weight) * sample_b;
+                self.samples[i + window_b_start] = new_sample.round() as i16;
+            }
+        } else {
+            return Err(String::from("No loop to blend"));
+        }
+
+        Ok(())
+    }
+
+    pub fn blend_default_window(&mut self) -> Result<(), String> {
+        let window_sz = self.sample_rate / 50;
+        self.blend(window_sz)
+    }
+
     pub fn write_to(&self, outpath: &impl AsRef<Path>) -> Result<(), String> {
         let outfile = OpenOptions::new()
             .read(true)
@@ -136,4 +177,8 @@ impl Project {
 
         Ok(())
     }
+}
+
+fn cube_step(t: f64) -> f64 {
+    t * t * (3.0 - 2.0 * t)
 }

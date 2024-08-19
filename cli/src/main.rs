@@ -6,7 +6,7 @@ use std::thread::sleep;
 use std::time::Duration;
 use std::{env, fs, io};
 
-const ARGUMENTS: [&str; 4] = ["in", "out", "start", "end"];
+const ARGUMENTS: [&str; 5] = ["in", "out", "start", "end", "duration"];
 const INPUT_BUFFER_SZ: usize = 4096;
 
 type CommandArgs = HashMap<&'static str, String>;
@@ -18,6 +18,7 @@ enum CommandKind {
     PlayLooped,
     Strip,
     SetLoop,
+    Blend,
     Help,
 }
 
@@ -31,6 +32,7 @@ impl TryFrom<&str> for CommandKind {
             "loop" => Ok(CommandKind::PlayLooped),
             "set-loop" => Ok(CommandKind::SetLoop),
             "strip" => Ok(CommandKind::Strip),
+            "blend" => Ok(CommandKind::Blend),
             "help" => Ok(CommandKind::Help),
             other => Err(format!("Unknown sub-command \"{}\"", other)),
         }
@@ -158,7 +160,7 @@ fn run_command((cmd, args): Command) -> Result<(), String> {
             CommandKind::PlayLooped => {
                 play_wave(reader, true)?;
             }
-            CommandKind::Strip | CommandKind::SetLoop => {
+            CommandKind::Strip | CommandKind::SetLoop | CommandKind::Blend => {
                 let q_wave_reader = core::QWaveReader::new(reader)?;
                 let project = core::Project::from_reader(q_wave_reader)?;
                 run_write_command((cmd, args), project)?;
@@ -192,6 +194,18 @@ fn run_write_command(
                 .unwrap_or(proj.sample_count());
 
             proj.set_loop(Some(start..end));
+        }
+        CommandKind::Blend => {
+            let blend_duration = args
+                .get("duration")
+                .map(|e| parse_time(e, &proj))
+                .transpose()?;
+
+            if let Some(window_sz) = blend_duration {
+                proj.blend(window_sz)?;
+            } else {
+                proj.blend_default_window()?;
+            }
         }
         _ => {
             unreachable!();

@@ -378,8 +378,8 @@ fn stream_callback<T>(
             let mut src_idx = sub_buf_len;
             let mut dst_idx = buf.len();
             while src_idx > 0 {
-                src_idx-= 1;
-                dst_idx-= channels;
+                src_idx -= 1;
+                dst_idx -= channels;
 
                 for ch in 0..channels {
                     buf[dst_idx + ch] = buf[src_idx];
