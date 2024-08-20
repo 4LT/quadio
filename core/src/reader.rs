@@ -70,11 +70,7 @@ impl<R: Read> QWaveReader<R> {
         let end = if let (Some(start), Some(length)) =
             (self.loop_start, self.loop_length)
         {
-            if let Some(d) = start.checked_add(length) {
-                Some(d)
-            } else {
-                None
-            }
+            start.checked_add(length)
         } else {
             None
         };

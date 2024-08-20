@@ -111,6 +111,7 @@ impl Project {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(true)
             .open(outpath)
             .map_err(|e| e.to_string())?;
         let mut writer = BufWriter::new(outfile);

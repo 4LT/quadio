@@ -140,8 +140,7 @@ fn run_command((cmd, args): Command) -> Result<(), String> {
                             start, cue_time,
                         );
 
-                        let loop_end =
-                            info.end.or(Some(info.sample_count)).unwrap();
+                        let loop_end = info.end.unwrap_or(info.sample_count);
 
                         let end_time =
                             f64::from(loop_end) / f64::from(info.sample_rate);
@@ -236,13 +235,13 @@ fn parse_time(
 
     Ok(if time_str == "LAST" {
         proj.sample_count()
-    } else if time_str.ends_with("ms") {
-        let millis = time_str[..time_str.len() - 2]
+    } else if let Some(stripped) = time_str.strip_suffix("ms") {
+        let millis = stripped
             .parse::<f64>()
             .or(Err("Failed to parse time in milliseconds"))?;
         (millis / 1000.0 * f64::from(proj.sample_rate())).round() as u32
-    } else if time_str.ends_with("s") {
-        let seconds = time_str[..time_str.len() - 1]
+    } else if let Some(stripped) = time_str.strip_suffix("s") {
+        let seconds = stripped
             .parse::<f64>()
             .or(Err("Failed to parse time in seconds"))?;
         (seconds * f64::from(proj.sample_rate())).round() as u32
@@ -252,10 +251,7 @@ fn parse_time(
 }
 
 fn play_wave<R: Read + Seek>(reader: R, looped: bool) -> Result<(), String> {
-    let key_reader = KeyReader::new();
-
-    if key_reader.is_none() {}
-
+    let key_reader = KeyReader::new().ok_or("Error creating key reader")?;
     let mut wave_reader = core::QWaveReader::new(reader)?;
     let mut quit = false;
     let mut done = false;
@@ -269,7 +265,7 @@ fn play_wave<R: Read + Seek>(reader: R, looped: bool) -> Result<(), String> {
     while !done {
         sleep(Duration::from_millis(30));
 
-        if let Some(Some(key)) = key_reader.as_ref().map(|r| r.read()) {
+        if let Some(key) = key_reader.read() {
             let state_tag = player.state();
 
             if key == b' ' {
