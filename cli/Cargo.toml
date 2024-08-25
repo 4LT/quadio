@@ -1,6 +1,6 @@
 [package]
 name = "quadio-cli"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "QUADIO Project command-line interface"
 repository = "https://github.com/4LT/quadio"
