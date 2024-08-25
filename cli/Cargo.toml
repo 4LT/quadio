@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-quadio-core = { path = "../core" }
+quadio-core = { version= "0.1.0", path = "../core" }
 
 [target.'cfg(not(target_os = "windows"))'.dependencies]
 libc = { version = "^0.2.155" }
