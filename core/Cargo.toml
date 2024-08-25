@@ -2,6 +2,12 @@
 name = "quadio-core"
 version = "0.1.0"
 edition = "2021"
+description = "QUADIO common library"
+repository = "https://github.com/4LT/quadio"
+documentation = "https://docs.rs/quadio-core"
+license = "CC0-1.0 OR MIT OR Apache-2.0"
+categories = ["multimedia::audio"]
+keywords = ["wave", "wav", "cue", "quake"]
 
 [dependencies]
 cuet = "^0.1.0"
