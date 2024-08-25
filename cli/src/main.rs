@@ -347,6 +347,10 @@ Time:
     of samples.  A suffix can be provided to use rational-valued times in the
     desired unit, seconds or milliseconds, e.g. '0.5s' for seconds or '111.1ms'
     for milliseconds.
+
+Playback controls:
+    space - Pause and resume playback.  Prints current sample on pause
+    q     - Stop & quit
 "#
     );
 }
