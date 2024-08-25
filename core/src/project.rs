@@ -5,6 +5,9 @@ use std::io::{BufWriter, Read, Seek, SeekFrom};
 use std::ops::Range;
 use std::path::Path;
 
+// (Presumed) minimum audible frequency
+const MIN_FREQ: u32 = 50u32; 
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum SampleFmt {
     Unsigned8,
@@ -66,6 +69,8 @@ impl Project {
     }
 
     pub fn blend(&mut self, window_sz: u32) -> Result<(), String> {
+        self.validate()?;
+
         if let Some(sample_loop) = &self.sample_loop {
             let loop_width = sample_loop.end - sample_loop.start;
 
@@ -102,7 +107,7 @@ impl Project {
     }
 
     pub fn blend_default_window(&mut self) -> Result<(), String> {
-        let window_sz = self.sample_rate / 50;
+        let window_sz = self.sample_rate / MIN_FREQ;
         self.blend(window_sz)
     }
 
@@ -173,6 +178,32 @@ impl Project {
                 chunk_writer
                     .append_label_chunk(&labeled_text)
                     .map_err(|e| e.to_string())?;
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        let len: u32 = self.samples.len().try_into().map_err(
+            |_| "Too many samples"
+        )?;
+
+        if len == 0 {
+            return Err(String::from("No audio samples"));
+        }
+
+        if let Some(sample_loop) = &self.sample_loop {
+            if sample_loop.end > len {
+                return Err(String::from("Loop extends beyond file end"));
+            }
+
+            if sample_loop.end < sample_loop.start {
+                return Err(String::from("Loop ends before it begins"));
+            }
+
+            if sample_loop.end == sample_loop.start {
+                return Err(String::from("Loop length is 0 samples"));
             }
         }
 
