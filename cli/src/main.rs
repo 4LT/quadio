@@ -110,7 +110,8 @@ fn expect_arg<'a>(
 
 fn run_command((cmd, args): Command) -> Result<(), String> {
     if cmd == CommandKind::Help {
-        eprintln!("Help!?")
+        println!("QUADIO - Quake Looped Audio Utilities\n");
+        usage();
     } else {
         let inpath = Path::new(expect_arg(&args, "in")?);
         let file = fs::File::open(inpath).map_err(|e| e.to_string())?;
@@ -224,6 +225,10 @@ fn main() {
 
     if let Err(e) = result.and_then(run_command) {
         eprintln!("{}", e);
+
+        if e.contains("sub-command") {
+            usage();
+        }
     }
 }
 
@@ -302,6 +307,48 @@ fn play_wave<R: Read + Seek>(reader: R, looped: bool) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+fn usage() {
+    println!(
+        r#"Usage: quadio-cli <sub-command> [<arg>...] [--] <input> [<output>]
+
+Sub-commands:
+    help
+        Print usage
+
+    info <input>
+        Print information about WAV file
+
+    play <input>
+        Play file from start to end, ignoring loops
+
+    loop <input>
+        Play file with loops.  If file contains no loops, loop from file start
+        to end
+
+    set-loop -start=<TIME> [-end=<TIME>] [--] <input> <output>
+        Set loop point, ranging from start to end.  If end is not provided,
+        the last sample in the file is chosen.  Points in time are 0-based (0
+        refers to the first sample)
+
+    strip <input> <output>
+        Strips loop (CUE and length markers) from file
+
+    blend [-duration=<TIME>] [--] <input> <output>
+        Blends samples from a *duration* window before the loop starts with
+        samples a *duration* window before the loop ends.  Loop must start after
+        *duration* and be at least as long as *duration*.  If the duration is
+        not provided, the smallest value is chosen which should eliminate
+        clicks and pops in playback
+
+Time:
+    Time arguments (start, end, duration) are given in non-zero integer numbers
+    of samples.  A suffix can be provided to use rational-valued times in the
+    desired unit, seconds or milliseconds, e.g. '0.5s' for seconds or '111.1ms'
+    for milliseconds.
+"#
+    );
 }
 
 #[cfg(not(target_os = "windows"))]

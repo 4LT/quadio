@@ -6,7 +6,7 @@ use std::ops::Range;
 use std::path::Path;
 
 // (Presumed) minimum audible frequency
-const MIN_FREQ: u32 = 50u32; 
+const MIN_FREQ: u32 = 50u32;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum SampleFmt {
@@ -185,9 +185,11 @@ impl Project {
     }
 
     pub fn validate(&self) -> Result<(), String> {
-        let len: u32 = self.samples.len().try_into().map_err(
-            |_| "Too many samples"
-        )?;
+        let len: u32 = self
+            .samples
+            .len()
+            .try_into()
+            .map_err(|_| "Too many samples")?;
 
         if len == 0 {
             return Err(String::from("No audio samples"));
