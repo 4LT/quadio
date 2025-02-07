@@ -67,6 +67,6 @@ jobs:
         run: zip quadio-${{github.ref_name}}-win-x86_64.zip ./*
       - uses: ncipollo/release-action@v1
         with:
-          artifacts: "quadio-${{githug.ref_name}}-win-x86_64.zip"
+          artifacts: "quadio-${{github.ref_name}}-win-x86_64.zip"
           body: "# QUADIO package ${{ github.ref_name }}"
   
