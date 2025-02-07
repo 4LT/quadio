@@ -26,8 +26,7 @@ jobs:
         if: ${{ matrix.target == 'x86_64-pc-windows-gnu' }}
         run: rustup target add ${{ matrix.target }}
       - name: Install ALSA
-        if: ${{ matrix.target == 'x86_64-unknown-linux-gnu' }}
-        run: sudo apt-get install alsa-base
+        run: sudo apt-get install libasound2-dev
       - name: Check
         run: cargo check --verbose --target ${{ matrix.target }}
       - name: Lint
