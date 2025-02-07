@@ -30,7 +30,7 @@ jobs:
       - name: Check
         run: cargo check --verbose --target ${{ matrix.target }}
       - name: Lint
-        run: cargo clippy -- -Dwarnings --target ${{ matrix.target }}
+        run: cargo clippy --target ${{ matrix.target }} -- -Dwarnings 
 
   build:
     name: Build Windows binaries
