@@ -191,7 +191,7 @@ fn run_write_command(
                 .get("end")
                 .map(|e| parse_time(e, &proj))
                 .transpose()?
-                .unwrap_or(proj.sample_count());
+                .unwrap_or(proj.samples().len().try_into().unwrap());
 
             proj.set_loop(Some(start..end));
         }
@@ -239,7 +239,7 @@ fn parse_time(
     let time_str = time_str.as_ref();
 
     Ok(if time_str == "LAST" {
-        proj.sample_count()
+        proj.samples().len().try_into().unwrap()
     } else if let Some(stripped) = time_str.strip_suffix("ms") {
         let millis = stripped
             .parse::<f64>()
@@ -315,32 +315,36 @@ fn usage() {
 
 Sub-commands:
     help
-        Print usage
+        Print usage.
 
     info <input>
-        Print information about WAV file
+        Print information about WAV file.
 
     play <input>
-        Play file from start to end, ignoring loops
+        Play file from start to end, ignoring loops.
 
     loop <input>
         Play file with loops.  If file contains no loops, loop from file start
-        to end
+        to end.
 
     set-loop -start=<TIME> [-end=<TIME>] [--] <input> <output>
         Set loop point, ranging from start to end.  If end is not provided,
         the last sample in the file is chosen.  Points in time are 0-based (0
-        refers to the first sample)
+        refers to the first sample).
 
     strip <input> <output>
-        Strips loop (CUE and length markers) from file
+        Strips loop (CUE and length markers) from file.
 
     blend [-duration=<TIME>] [--] <input> <output>
         Blends samples from a *duration* window before the loop starts with
         samples a *duration* window before the loop ends.  Loop must start after
         *duration* and be at least as long as *duration*.  If the duration is
         not provided, the smallest value is chosen which should eliminate
-        clicks and pops in playback
+        clicks and pops in playback.
+
+        Additionally, samples after the loop are truncated, then samples from
+        the beginning of the loop are copied to the end.  This is to prevent
+        clicks that may occur when upsampling before playback.
 
 Time:
     Time arguments (start, end, duration) are given in non-zero integer numbers
@@ -349,7 +353,7 @@ Time:
     for milliseconds.
 
 Playback controls:
-    space - Pause and resume playback.  Prints current sample on pause
+    space - Pause and resume playback.  Prints current sample on pause.
     q     - Stop & quit
 "#
     );

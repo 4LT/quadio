@@ -6,7 +6,7 @@ use std::ops::Range;
 use std::path::Path;
 
 // (Presumed) minimum audible frequency
-const MIN_FREQ: u32 = 50u32;
+const MIN_FREQ: u32 = 40u32;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum SampleFmt {
@@ -64,8 +64,8 @@ impl Project {
         self.sample_rate
     }
 
-    pub fn sample_count(&self) -> u32 {
-        self.samples.len().try_into().unwrap()
+    pub fn samples(&self) -> &[i16] {
+        &self.samples
     }
 
     pub fn blend(&mut self, window_sz: u32) -> Result<(), String> {
@@ -103,12 +103,22 @@ impl Project {
             return Err(String::from("No loop to blend"));
         }
 
+        self.pad_loop();
+
+        // hound can produce WAV files with odd-sized RIFF chunks; AFAIK such
+        // files are malformed, so manually pad with a duplicate sample if
+        // samples are an odd number of bytes
+        if self.render_format == SampleFmt::Unsigned8
+            && self.samples.len() & 1 == 1
+        {
+            self.samples.push(self.samples[self.samples.len() - 1]);
+        }
+
         Ok(())
     }
 
     pub fn blend_default_window(&mut self) -> Result<(), String> {
-        let window_sz = self.sample_rate / MIN_FREQ;
-        self.blend(window_sz)
+        self.blend(self.min_window_size())
     }
 
     pub fn write_to(&self, outpath: &impl AsRef<Path>) -> Result<(), String> {
@@ -210,6 +220,27 @@ impl Project {
         }
 
         Ok(())
+    }
+
+    // Precondition: self.sample_loop is Some(_)
+    fn pad_loop(&mut self) {
+        let sample_loop = self.sample_loop.clone().unwrap();
+        let extra_sample_ct = self.min_window_size();
+        let loop_width = sample_loop.end - sample_loop.start;
+        self.samples.truncate(sample_loop.end as usize);
+
+        let extra_samples = (0..extra_sample_ct)
+            .map(|index| {
+                let index = ((index % loop_width) + sample_loop.start) as usize;
+                self.samples[index]
+            })
+            .collect::<Vec<i16>>();
+
+        self.samples.extend(extra_samples);
+    }
+
+    fn min_window_size(&self) -> u32 {
+        self.sample_rate / MIN_FREQ
     }
 }
 

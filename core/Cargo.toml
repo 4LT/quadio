@@ -1,6 +1,6 @@
 [package]
 name = "quadio-core"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "QUADIO common library"
 repository = "https://github.com/4LT/quadio"
@@ -13,4 +13,4 @@ keywords = ["wave", "wav", "cue", "quake"]
 cuet = "^0.1.0"
 hound = "^3.5.1"
 cpal = "^0.15.3"
-rubato = "^0.15.0"
+rubato = "^0.16.1"
