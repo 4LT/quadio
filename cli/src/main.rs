@@ -120,14 +120,14 @@ fn run_command((cmd, args): Command) -> Result<(), String> {
         match cmd {
             CommandKind::Info => {
                 let info = core::QWaveReader::new(reader)?.metadata();
-                println!("Information");
-                println!("\tSample rate = {}", info.sample_rate);
+                println!("Sample rate = {}", info.sample_rate);
+                println!("Bits / sample = {}", info.bits_per_sample);
 
                 let duration_s =
                     f64::from(info.sample_count) / f64::from(info.sample_rate);
 
                 println!(
-                    "\tDuration = {} samples ({:.3}s)",
+                    "Duration = {} samples ({:.3}s)",
                     info.sample_count, duration_s,
                 );
 
@@ -137,7 +137,7 @@ fn run_command((cmd, args): Command) -> Result<(), String> {
                             f64::from(start) / f64::from(info.sample_rate);
 
                         println!(
-                            "\tLoop starts at sample {} ({:.3}s)",
+                            "Loop starts at sample {} ({:.3}s)",
                             start, cue_time,
                         );
 
@@ -147,11 +147,11 @@ fn run_command((cmd, args): Command) -> Result<(), String> {
                             f64::from(loop_end) / f64::from(info.sample_rate);
 
                         println!(
-                            "\tLoop ends at sample {} ({:.3}s)",
+                            "Loop ends at sample {} ({:.3}s)",
                             loop_end, end_time
                         );
                     }
-                    None => println!("No loop point found"),
+                    None => println!("No loop found"),
                 }
             }
             CommandKind::Play => {
