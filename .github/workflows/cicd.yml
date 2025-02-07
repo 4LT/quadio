@@ -24,7 +24,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install Windows toolchain
         if: ${{ matrix.target == 'x86_64-pc-windows-gnu' }}
-        run: rustup toolchain install ${{ matrix.target }}
+        run: rustup target add ${{ matrix.target }}
       - name: Check
         run: cargo check --verbose --target ${{ matrix.target }}
       - name: Lint
