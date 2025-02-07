@@ -1,0 +1,21 @@
+[package]
+name = "quadio-gui"
+version = "0.1.0"
+edition = "2021"
+description = "QUADIO Project graphical interface"
+repository = "https://github.com/4LT/quadio"
+license = "CC0-1.0 OR MIT OR Apache-2.0"
+categories = ["multimedia::audio", "gui"]
+keywords = ["wave", "wav", "cue", "quake"]
+
+[[bin]]
+name = "quadio"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+quadio-core = { version = "0.1.0", path = "../core" }
+#kas = { version = "0.15.0", features = [ "x11" ] }
+#rfd = { version = "0.15.1", default-features = false, features = ["gtk3"] }
+gtk4 = { version = "0.9.5", features = [ "v4_10" ] }
