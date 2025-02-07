@@ -1,6 +1,6 @@
 ## Changelog
 
-### 1.0.1
+### 1.1.0
 
 * Clean up info sub-command output
 * Provide bits / sample in info sub-command
