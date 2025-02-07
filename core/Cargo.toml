@@ -13,4 +13,4 @@ keywords = ["wave", "wav", "cue", "quake"]
 cuet = "^0.1.0"
 hound = "^3.5.1"
 cpal = "^0.15.3"
-rubato = "^0.15.0"
+rubato = "^0.16.1"
