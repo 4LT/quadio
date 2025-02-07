@@ -1,9 +1,10 @@
-name: CI/CD
+name: 'CI/CD'
 
 on:
   pull_request:
     branches: [ main ]
-  push: [ main ]
+  push:
+    branches: [ main ]
     tags:
       - "v*"
 
@@ -49,7 +50,7 @@ jobs:
           cp cli/changelog.md artifacts/cli-changelog.md
       - uses: actions/upload-artifact@v4
         with:
-          name: quadio-win64-${{github.ref_name}}-${{githu.sha}}
+          name: quadio-win64-${{github.ref_name}}-${{github.sha}}
           path: artifacts/*
           retention-days: 5
 
