@@ -191,7 +191,7 @@ fn run_write_command(
                 .get("end")
                 .map(|e| parse_time(e, &proj))
                 .transpose()?
-                .unwrap_or(proj.sample_count());
+                .unwrap_or(proj.samples().len().try_into().unwrap());
 
             proj.set_loop(Some(start..end));
         }
@@ -239,7 +239,7 @@ fn parse_time(
     let time_str = time_str.as_ref();
 
     Ok(if time_str == "LAST" {
-        proj.sample_count()
+        proj.samples().len().try_into().unwrap()
     } else if let Some(stripped) = time_str.strip_suffix("ms") {
         let millis = stripped
             .parse::<f64>()
