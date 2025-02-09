@@ -1,6 +1,6 @@
 [package]
 name = "quadio-cli"
-version = "1.1.0"
+version = "1.1.1"
 edition = "2021"
 description = "QUADIO Project command-line interface"
 repository = "https://github.com/4LT/quadio"
@@ -14,7 +14,7 @@ test = false
 bench = false
 
 [dependencies]
-quadio-core = { version= "0.2.0", path = "../core" }
+quadio-core = { version= "0.2.1", path = "../core" }
 
 [target.'cfg(not(target_os = "windows"))'.dependencies]
 libc = { version = "^0.2.155" }

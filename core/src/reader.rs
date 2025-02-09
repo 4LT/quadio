@@ -44,7 +44,10 @@ impl<R: Read + Seek> QWaveReader<R> {
             list_chunk.and_then(|(_, bytes)| {
                 let labeled_texts =
                     cuet::extract_labeled_text_from_list(&bytes);
-                labeled_texts.first().map(|ltxt| ltxt.sample_length)
+                labeled_texts
+                    .first()
+                    .filter(|ltxt| ltxt.purpose_id == *b"mark")
+                    .map(|ltxt| ltxt.sample_length)
             })
         } else {
             None
