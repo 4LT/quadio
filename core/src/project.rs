@@ -56,6 +56,10 @@ impl Project {
         })
     }
 
+    pub fn samples(&self) -> &Vec<i16> {
+        &self.samples
+    }
+
     pub fn set_loop(&mut self, sample_loop: Option<Range<u32>>) {
         self.sample_loop = sample_loop;
     }
