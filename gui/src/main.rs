@@ -15,13 +15,21 @@ use gtk4::{
     EventControllerScrollFlags,
 };
 use gtk4::gio::{ListStore, Menu, SimpleAction, Cancellable};
-use gtk4::cairo::{ImageSurface, ImageSurfaceData, Format, Filter, Matrix};
+use gtk4::cairo::{
+    ImageSurface,
+    ImageSurfaceData,
+    Format,
+    Filter,
+    Context
+};
 use gtk4::gdk::BUTTON_SECONDARY;
 use glib::{Type, Propagation};
 
 use quadio_core as core;
 
 mod waveform;
+
+use waveform::Color;
 
 struct ImageWrapper {
     pub image: ImageSurface,
@@ -90,6 +98,55 @@ impl ViewTransform {
     }
 }
 
+fn draw_waveform(
+    ctx: &Context,
+    draw_info: waveform::DrawInfo<ImageWrapper>,
+    theme: waveform::Theme
+) {
+    let paint_background = || {
+        ctx.set_source_rgb(
+            theme.background.red(),
+            theme.background.green(),
+            theme.background.blue()
+        );
+        ctx.paint().unwrap();
+    };
+
+    match draw_info {
+        waveform::DrawInfo::Image(wrapper) => {
+            let wrapper = &*wrapper.borrow();
+            let surface = &wrapper.image;
+            ctx.set_source_surface(surface, 0.0, 0.0).unwrap();
+            ctx.source().set_filter(Filter::Nearest);
+            ctx.paint().unwrap();
+        },
+        waveform::DrawInfo::Vertices(coords) => {
+            paint_background();
+            if coords.len() >= 2 {
+                ctx.set_source_rgb(
+                    theme.bright.red(),
+                    theme.bright.green(),
+                    theme.bright.blue(),
+                );
+
+                ctx.set_line_width(1.0);
+
+                let (start_x, start_y) = coords[0];
+                ctx.move_to(start_x, start_y);
+                
+                for &(x, y) in &coords[1..] {
+                    ctx.line_to(x, y);
+                }
+
+                ctx.stroke().unwrap();
+            }
+        },
+        _ => {
+            paint_background();
+        },
+    }
+}
+
 fn main() -> glib::ExitCode {
     let app = Application::builder()
         .application_id("com.loliaintregisterinnodomainname.Quadio")
@@ -135,6 +192,12 @@ fn main() -> glib::ExitCode {
         let project = Rc::new(RefCell::new(None));
         let waveform = Rc::new(RefCell::new(None));
 
+        let wf_theme = waveform::Theme {
+            background: u32::from_be_bytes([255, 40, 40, 40]),
+            bright: u32::from_be_bytes([255, 255, 230, 0]),
+            dim: u32::from_be_bytes([255, 170, 160, 0]),
+        };
+
         {
             let project = Rc::clone(&project);
             let waveform = Rc::clone(&waveform);
@@ -173,17 +236,7 @@ fn main() -> glib::ExitCode {
                                 buffer_width,
                                 height,
                                 stride,
-                                waveform::Theme {
-                                    background: u32::from_be_bytes(
-                                        [255, 20, 20, 20]
-                                    ),
-                                    in_range: u32::from_be_bytes(
-                                        [255, 255, 230, 0]
-                                    ),
-                                    rms: u32::from_be_bytes(
-                                        [255, 170, 160, 0]
-                                    ),
-                                },
+                                wf_theme,
                                 move |pixbuf| {
                                     ImageWrapper {
                                         image: ImageSurface::create_for_data(
@@ -245,18 +298,8 @@ fn main() -> glib::ExitCode {
                         width_px: width,
                     };
 
-                    if let waveform::DrawInfo::Image(wrapper) =
-                        wf.render(&window)
-                    {
-                        let wrapper = &*wrapper.borrow();
-                        let surface = &wrapper.image;
-                        ctx.set_source_surface(surface, 0.0, 0.0).unwrap();
-                        ctx.source().set_filter(Filter::Nearest);
-                        ctx.paint().unwrap();
-                    } else {
-                        ctx.set_source_rgb(0.2, 0.2, 0.2);
-                        ctx.paint().unwrap();
-                    }
+                    draw_waveform(ctx, wf.render(&window), wf_theme);
+
                 }
             });
         }

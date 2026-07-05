@@ -5,8 +5,28 @@ use std::cell::RefCell;
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct Theme {
     pub background: u32,
-    pub in_range: u32,
-    pub rms: u32,
+    pub dim: u32,
+    pub bright: u32,
+}
+
+pub trait Color {
+    fn red(&self) -> f64;
+    fn green(&self) -> f64;
+    fn blue(&self) -> f64;
+}
+
+impl Color for u32 {
+    fn red(&self) -> f64 {
+        f64::from((*self & 0x00FF0000_u32) >> 16) / 255.0
+    }
+    
+    fn green(&self) -> f64 {
+        f64::from((*self & 0x0000FF00_u32) >> 8) / 255.0
+    }
+
+    fn blue(&self) -> f64 {
+        f64::from(*self & 0x000000FF_u32) / 255.0
+    }
 }
 
 pub trait MutSlice {
@@ -25,6 +45,22 @@ pub struct Waveform<Img: MutSlice> {
     buffer_stride: i32,
     theme: Theme,
 }
+
+pub enum DrawInfo<Img> {
+    Blank,
+    Vertices(Vec<(f64, f64)>),
+    Image(Rc<RefCell<Img>>),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Window {
+    pub offset_px: i32,
+
+    // zoom as ratio pixels/sample
+    pub zoom: f64,
+    pub width_px: i32,
+}
+
 
 impl<Img: MutSlice> Waveform<Img> {
     pub fn new<'n>(
@@ -89,157 +125,213 @@ impl<Img: MutSlice> Waveform<Img> {
 
         if window.zoom <= 0.0 {
             panic!("Zoom must be > 0");
-        } else if window.zoom > self.zoom_cutoff {
-            // todo: stroke path
+        }
+
+        if window.offset_px > window.width_px {
             DrawInfo::Blank
+        } else if window.zoom > self.zoom_cutoff {
+            DrawInfo::Vertices(self.render_vertices(window))
         } else {
-            let col_count = window.width_px.try_into().unwrap();
-            let row_count = self.buffer_height.try_into().unwrap();
+            self.render_image(window)
+                .map(|img| DrawInfo::Image(img))
+                .unwrap_or(DrawInfo::Blank)
+        }
+    }
 
-            // left side of window in pixels and samples
-            let left_px = -window.offset_px;
-            let left_sample = left_px as f64 / window.zoom;
-            // padding between left of window and waveform start
-            let left_pad = window.offset_px.max(0);
+    fn render_vertices(&mut self, window: &Window) -> Vec<(f64, f64)> {
+        let left_px = -window.offset_px;
+        let right_px = window.width_px - window.offset_px;
 
-            if left_pad >= window.width_px {
-                return DrawInfo::Blank;
+        println!("window width_px: {}", window.width_px);
+        println!("left_px: {left_px}");
+
+        let left_edge = (left_px as f64 / window.zoom).floor() as isize;
+        let right_edge = (right_px as f64 / window.zoom).ceil() as isize;
+
+        let left_sample = left_edge.max(0);
+        let right_sample = right_edge.min(
+            (self.samples.len()-1).try_into().expect("Too many samples")
+        );
+
+        if left_sample > right_sample {
+            return vec![];
+        }
+
+        let left_sample = left_sample as usize;
+        let right_sample = right_sample as usize;
+
+        let samples = &self.samples[left_sample..right_sample];
+        let mut verts = vec![(0.0, 0.0); samples.len()];
+
+        for (idx, mut vert) in verts.iter_mut().enumerate() {
+            let x = ((idx + left_sample) as f64) * window.zoom
+                + window.offset_px as f64;
+            
+            let range = i16::MAX as f64 - i16::MIN as f64;
+            let height = self.buffer_height as f64;
+            let y = height
+                - (samples[idx] as f64 - i16::MIN as f64) * height / range;
+
+            *vert = (x, y);
+        }
+
+        println!("Verts: {}", verts.len());
+        verts
+    }
+
+    fn render_image(&mut self, window: &Window) -> Option<Rc<RefCell<Img>>> {
+        let col_count = window.width_px.try_into().unwrap();
+        let row_count = self.buffer_height.try_into().unwrap();
+
+        // Calculate scale and mip
+        let zoom_ratio = self.zoom_cutoff/window.zoom;
+        let zoom_ratio_log = zoom_ratio.log2();
+        let mip_level = zoom_ratio_log as usize;
+
+        if mip_level >= self.bin_mips.len() {
+            return None;
+        }
+
+        let scale = 1.0/(zoom_ratio_log - zoom_ratio_log.floor() + 1.0);
+        let mip = &self.bin_mips[mip_level];
+
+        // left edge of samples in pixels and samples
+        let left_px = -window.offset_px;
+        let left_sample = left_px as f64 / window.zoom;
+
+        // padding between left of window and waveform start
+        let left_pad = window.offset_px.max(0);
+
+        let left_pad = left_pad as usize;
+        println!("Window = {window:?}");
+        println!("window.offset = {}, window.width_px = {}",
+            window.offset_px,
+            window.width_px,
+        );
+
+        let right_px = window.width_px - window.offset_px;
+        let right_sample = right_px as f64 / window.zoom;
+
+        println!("mip.len() = {}, samples.len() = {}",
+            mip.len(), self.samples.len()
+        );
+        let bins_per_sample = mip.len() as f64 / self.samples.len() as f64;
+
+        let left_bin = (
+            ((left_sample * bins_per_sample).floor() as isize)
+                .max(0) as usize
+        ).min(mip.len());
+
+        if left_bin >= mip.len() {
+            return None;
+        }
+
+        let right_bin = ((right_sample * bins_per_sample).floor() as isize)
+            .min(mip.len().try_into().unwrap());
+
+        if right_bin < 0 {
+            return None;
+        }
+
+        let right_bin = right_bin.try_into().unwrap();
+
+        println!("Bin indices {}..{}", left_bin, right_bin);
+        let mip_slice = &mip[left_bin..right_bin];
+
+        let new_size = (mip_slice.len() as f64 * scale) as usize;
+
+        let bins = if new_size == 0 {
+            vec![]
+        } else {
+            rebin_ranges(
+                mip_slice.len(),
+                (new_size)
+                    .min(window.width_px as usize)
+            )
+                .map(|range| Bin::from_others(&mip_slice[range]))
+                .collect::<Vec<_>>()
+        };
+
+        let stride = self.buffer_stride as usize;
+
+
+        let sample_to_row = {
+            let row_max = (row_count - 1) as f64;
+
+            move |sample: f64| {
+                ((1.0 - sample)/2.0 * row_max) as usize
             }
+        };
 
-            let left_pad = left_pad as usize;
-            let right_px = window.offset_px + window.width_px;
-            let right_sample = right_px as f64 / window.zoom;
-            let zoom_ratio = self.zoom_cutoff/window.zoom;
-            let zoom_ratio_log = zoom_ratio.log2();
-            let mip_level = zoom_ratio_log as usize;
+        {
+            let color_coord = {
+                let image = Rc::clone(&self.image);
 
-            if mip_level >= self.bin_mips.len() {
-                return DrawInfo::Blank;
-            }
-
-            let scale = 1.0/(zoom_ratio_log - zoom_ratio_log.floor() + 1.0);
-            let mip = &self.bin_mips[mip_level];
-            let bins_per_sample = mip.len() as f64 / self.samples.len() as f64;
-
-            let left_bin = ((left_sample * bins_per_sample).floor() as isize)
-                .max(0) as usize;
-
-            let right_bin = ((right_sample * bins_per_sample).floor() as isize)
-                .min(mip.len().try_into().unwrap());
-
-            if right_bin < 0 {
-                return DrawInfo::Blank;
-            }
-
-            let right_bin = right_bin as usize;
-            let mip_slice = &mip[left_bin..right_bin];
-
-            let bins = rebin_ranges(
-                    mip_slice.len(),
-                    ((mip_slice.len() as f64 * scale) as usize)
-                        .min(window.width_px as usize)
-                )
-                    .map(|range| Bin::from_others(&mip_slice[range]))
-                    .collect::<Vec<_>>();
-
-            println!("{} + {} <= {}", bins.len(), left_pad, window.width_px);
-            assert!(bins.len() + left_pad <= window.width_px as usize);
-
-            let stride = self.buffer_stride as usize;
-
-            let sample_to_row = {
-                let row_max = (row_count - 1) as f64;
-
-                move |sample: f64| {
-                    ((1.0 - sample)/2.0 * row_max) as usize
+                move |row, col, color: u32| {
+                    let mut borrowed_image = image.borrow_mut();
+                    let mut pixbuf = borrowed_image.mut_slice();
+                    let idx = row * stride + col*4;
+                    pixbuf[idx..idx+4].copy_from_slice(
+                        &color.to_ne_bytes()
+                    );
                 }
             };
 
-            {
-                let color_coord = {
-                    let image = Rc::clone(&self.image);
-
-                    move |row, col, color: u32| {
-                        let mut borrowed_image = image.borrow_mut();
-                        let mut pixbuf = borrowed_image.mut_slice();
-                        let idx = row * stride + col*4;
-                        pixbuf[idx..idx+4].copy_from_slice(
-                            &color.to_ne_bytes()
-                        );
-                    }
-                };
-
-                for row in 0..row_count {
-                    for col in 0..left_pad {
-                        color_coord(row, col, self.theme.background);
-                    }
+            for row in 0..row_count {
+                for col in 0..left_pad {
+                    color_coord(row, col, self.theme.background);
                 }
-
-                let col_stop = bins.len() + left_pad;
-                println!("col_stop {}", col_stop);
-
-                for (col, bin) in std::iter::zip(left_pad..col_stop, bins) {
-                    let start = 0;
-                    let stop_max = sample_to_row(bin.max());
-                    let stop_min = sample_to_row(bin.min());
-                    let stop_pos_rms = sample_to_row(bin.rms()).max(stop_max);
-                    let stop_neg_rms = sample_to_row(-bin.rms()).min(stop_min);
-
-                    for row in start..stop_max {
-                        color_coord(row, col, self.theme.background);
-                    }
-
-                    for row in stop_max..stop_pos_rms {
-                        color_coord(row, col, self.theme.in_range);
-                    }
-
-                    for row in stop_pos_rms..stop_neg_rms {
-                        color_coord(row, col, self.theme.rms);
-                    }
-
-                    for row in stop_neg_rms..stop_min {
-                        color_coord(row, col, self.theme.in_range);
-                    }
-
-                    for row in stop_min..row_count {
-                        color_coord(row, col, self.theme.background);
-                    }
-                }
-
-                for row in 0..row_count {
-                    for col in col_stop..col_count {
-                        color_coord(row, col, self.theme.background);
-                    }
-                }
-
-                println!("RENDERED 0..{}..{}..{}",
-                    left_pad,
-                    col_stop,
-                    col_count,
-                );
             }
 
-            DrawInfo::Image(Rc::clone(&self.image))
+            let col_stop = bins.len() + left_pad;
+            println!("col_stop {}", col_stop);
+
+            for (col, bin) in std::iter::zip(left_pad..col_stop, bins) {
+                let start = 0;
+                let stop_max = sample_to_row(bin.max());
+                let stop_min = sample_to_row(bin.min());
+                let stop_pos_rms = sample_to_row(bin.rms()).max(stop_max);
+                let stop_neg_rms = sample_to_row(-bin.rms()).min(stop_min);
+
+                for row in start..stop_max {
+                    color_coord(row, col, self.theme.background);
+                }
+
+                for row in stop_max..stop_pos_rms {
+                    color_coord(row, col, self.theme.dim);
+                }
+
+                for row in stop_pos_rms..stop_neg_rms {
+                    color_coord(row, col, self.theme.bright);
+                }
+
+                for row in stop_neg_rms..stop_min {
+                    color_coord(row, col, self.theme.dim);
+                }
+
+                for row in stop_min..row_count {
+                    color_coord(row, col, self.theme.background);
+                }
+            }
+
+            for row in 0..row_count {
+                for col in col_stop..col_count {
+                    color_coord(row, col, self.theme.background);
+                }
+            }
+
+            println!("RENDERED 0..{}..{}..{}",
+                left_pad,
+                col_stop,
+                col_count,
+            );
         }
+
+        Some(Rc::clone(&self.image))
     }
 }
 
-pub enum DrawInfo<Img> {
-    Blank,
-    Samples(Vec<(f64, f64)>),
-    Image(Rc<RefCell<Img>>),
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Window {
-    pub offset_px: i32,
-
-    // zoom as ratio pixels/sample
-    pub zoom: f64,
-    pub width_px: i32,
-}
-
-// Adapted from Besenham's line-drawing algorithm
+// Adapted from Bresenham's line-drawing algorithm
 fn rebin_ranges(old_size: usize, new_size: usize)
     -> impl Iterator<Item=std::ops::Range<usize>>
 {
@@ -247,8 +339,8 @@ fn rebin_ranges(old_size: usize, new_size: usize)
         panic!("New size must be less than old size");
     }
 
-    if old_size == 0 {
-        panic!("Old size must be greater than zero");
+    if new_size == 0 {
+        panic!("New size must be greater than zero");
     }
 
     let small_slice_size = old_size / new_size;
@@ -306,9 +398,13 @@ pub struct Bin {
 
 impl Bin {
     pub fn bin_samples(samples: &[i16], bin_count: usize) -> Vec<Bin> {
-        rebin_ranges(samples.len(), bin_count).map(
-            |range| Bin::from_samples(&samples[range])
-        ).collect()
+        if bin_count == 0 {
+            vec![]
+        } else {
+            rebin_ranges(samples.len(), bin_count).map(
+                |range| Bin::from_samples(&samples[range])
+            ).collect()
+        }
     }
 
     pub fn from_samples(samples: &[i16]) -> Self {
@@ -423,117 +519,5 @@ mod tests {
             bins.into_iter().map(|b| b.sample_count).sum::<usize>(),
             1017
         );
-    }
-
-    #[test]
-    fn waveform_1_sample_zoom_cutoff_1() {
-        let samples = vec![0i16];
-        let zoom_cutoff = 1.0;
-
-        let waveform = Waveform::new(
-            samples,
-            1,
-            zoom_cutoff,
-            |i| { i },
-            |img, _, _| { img.len() },
-        );
-        
-        assert_eq!(waveform.mips.len(), 1);
-        assert_eq!(waveform.mips[0], 4);
-        assert_eq!(
-            waveform.draw_info(&Window {
-                offset: 0.0,
-                zoom: 0.3,
-                width_px: 137,
-            }),
-            DrawInfo::Image(&4, 0.0, 0.3)
-        );
-    }
-
-    #[test]
-    fn waveform_3033_samples_zoom_cutoff_1() {
-        let samples = vec![0i16; 3033];
-        let zoom_cutoff = 1.0;
-
-        let waveform = Waveform::new(
-            samples,
-            1,
-            zoom_cutoff,
-            |i| { i },
-            |img, _width, _stride| { img.len() },
-        );
-        
-        // floor(log2(3033)) + 1 == 12
-        assert_eq!(waveform.mips.len(), 12);
-        // 2^(12 - 1) * 4 = 8192
-        assert_eq!(waveform.mips[0], 8192);
-
-        assert_eq!(
-            waveform.draw_info(&Window {
-                offset: 2.0,
-                zoom: 1.0,
-                width_px: 137,
-            }),
-            DrawInfo::Image(&8192, 2.0, 1.0)
-        );
-
-        let DrawInfo::Image(sz, _, scale) = waveform.draw_info(&Window {
-            offset: 0.0,
-            zoom: 0.3,
-            width_px: 12,
-        }) else {
-            panic!("Unexpected DrawInfo variant");
-        };
-
-        assert_eq!(scale, 0.3 * 4.0);
-        assert_eq!(sz, &2048);
-
-        let DrawInfo::Image(sz, _, scale) = waveform.draw_info(&Window {
-            offset: 0.0,
-            zoom: 0.2,
-            width_px: 12,
-        }) else {
-            panic!("Unexpected DrawInfo variant");
-        };
-
-        assert_eq!(sz, &1024);
-        assert_eq!(scale, 0.2 * 8.0);
-    }
-
-    #[test]
-    fn waveform_137_samples_zoom_cutoff_0_3() {
-        let samples = vec![0i16; 137];
-        let zoom_cutoff = 0.3;
-
-        let waveform = Waveform::new(
-            samples,
-            1,
-            zoom_cutoff,
-            |i| { i },
-            |img, _width, _stride| { img.len() },
-        );
-
-        // floor(log2(137)) + 1 == 8
-        // floor(log2(0.3)) == -2
-        // 8 - 2 == 6
-        assert_eq!(waveform.mips.len(), 6);
-        // 2^(6 - 1) * 4 == 128
-        assert_eq!(waveform.mips[0], 128);
-        assert_eq!(waveform.mips[1], 64);
-        assert_eq!(waveform.mips[2], 32);
-        assert_eq!(waveform.mips[3], 16);
-        assert_eq!(waveform.mips[4], 8);
-        assert_eq!(waveform.mips[5], 4);
-
-        let DrawInfo::Image(sz, _, scale) = waveform.draw_info(&Window {
-            offset: 0.0,
-            zoom: 0.1,
-            width_px: 12,
-        }) else {
-            panic!("Unexpected DrawInfo variant");
-        };
-
-        assert_eq!(sz, &32);
-        assert_eq!(scale, 0.1 * 16.0);
     }
 }
